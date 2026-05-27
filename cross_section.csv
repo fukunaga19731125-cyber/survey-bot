@@ -1,5 +1,0 @@
-﻿section_name,start_station,start_distance,end_station,end_distance,left_width,left_slope,right_width,right_slope,memo
-CS1,No.0,0,No.1,20,2.3,-1.5,2.3,-1.5,標準横断
-CS2,No.1,20,No.2,40,2.3,-1.5,2.3,-1.5,標準横断
-CS3,No.2,40,No.3,60,2.3,-1.5,2.3,-1.5,標準横断
-CS4,No.3,60,No.3+19.621,79.621,2.3,-1.5,2.3,-1.5,標準横断
