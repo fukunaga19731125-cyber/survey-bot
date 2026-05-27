@@ -68,8 +68,13 @@ def load_road_profile():
 def load_vertical_curves():
     """
     vertical_curve.csv を読み込む。
-    必要列:
-    curve_name,bvc_distance,bvc_height,pvi_distance,pvi_height,evc_distance,evc_height
+    新しい形式:
+    curve_name,pvi_station,pvi_distance,pvi_height,curve_length,g1_percent,g2_percent,curve_radius,memo
+
+    pvi_height は、バーチカル補正前の勾配変化点高。
+    g1_percent は進入勾配。
+    g2_percent は退出勾配。
+    curve_radius は確認用。計算には使わない。
     """
     if not os.path.exists(VERTICAL_CURVE_CSV):
         return []
@@ -81,30 +86,70 @@ def load_vertical_curves():
 
         required_columns = {
             "curve_name",
-            "bvc_distance",
-            "bvc_height",
+            "pvi_station",
             "pvi_distance",
             "pvi_height",
-            "evc_distance",
-            "evc_height"
+            "curve_length",
+            "g1_percent",
+            "g2_percent"
         }
 
         if not required_columns.issubset(reader.fieldnames):
             raise ValueError(
-                "vertical_curve.csv の見出しは "
-                "curve_name,bvc_distance,bvc_height,pvi_distance,pvi_height,evc_distance,evc_height "
+                "vertical_curve.csv の見出しは、最低限 "
+                "curve_name,pvi_station,pvi_distance,pvi_height,curve_length,g1_percent,g2_percent "
                 "にしてください。"
             )
 
         for row in reader:
+            curve_name = row["curve_name"].strip()
+            pvi_station = row["pvi_station"].strip()
+            pvi_distance = float(row["pvi_distance"])
+            pvi_height = float(row["pvi_height"])
+            curve_length = float(row["curve_length"])
+            g1_percent = float(row["g1_percent"])
+            g2_percent = float(row["g2_percent"])
+
+            curve_radius = ""
+            if "curve_radius" in row and row["curve_radius"] is not None:
+                curve_radius = row["curve_radius"].strip()
+
+            memo = ""
+            if "memo" in row and row["memo"] is not None:
+                memo = row["memo"].strip()
+
+            if curve_length <= 0:
+                raise ValueError(f"{curve_name} の曲線長が0以下です。")
+
+            # PVIを中心としてBVC・EVCを計算
+            bvc_distance = pvi_distance - curve_length / 2
+            evc_distance = pvi_distance + curve_length / 2
+
+            # 勾配%を小数勾配に変換
+            g1 = g1_percent / 100
+            g2 = g2_percent / 100
+
+            # BVC・EVCの接線上高さを計算
+            # pvi_height は接線交点高
+            bvc_height = pvi_height - g1 * (curve_length / 2)
+            evc_height = pvi_height + g2 * (curve_length / 2)
+
             curves.append({
-                "curve_name": row["curve_name"].strip(),
-                "bvc_distance": float(row["bvc_distance"]),
-                "bvc_height": float(row["bvc_height"]),
-                "pvi_distance": float(row["pvi_distance"]),
-                "pvi_height": float(row["pvi_height"]),
-                "evc_distance": float(row["evc_distance"]),
-                "evc_height": float(row["evc_height"])
+                "curve_name": curve_name,
+                "pvi_station": pvi_station,
+                "pvi_distance": pvi_distance,
+                "pvi_height": pvi_height,
+                "curve_length": curve_length,
+                "g1_percent": g1_percent,
+                "g2_percent": g2_percent,
+                "g1": g1,
+                "g2": g2,
+                "bvc_distance": bvc_distance,
+                "bvc_height": bvc_height,
+                "evc_distance": evc_distance,
+                "evc_height": evc_height,
+                "curve_radius": curve_radius,
+                "memo": memo
             })
 
     return curves
@@ -121,27 +166,16 @@ def calculate_vertical_curve_height(distance):
     for curve in curves:
         bvc_d = curve["bvc_distance"]
         bvc_h = curve["bvc_height"]
-        pvi_d = curve["pvi_distance"]
-        pvi_h = curve["pvi_height"]
         evc_d = curve["evc_distance"]
-        evc_h = curve["evc_height"]
+        g1 = curve["g1"]
+        g2 = curve["g2"]
+        L = curve["curve_length"]
 
         if bvc_d <= distance <= evc_d:
-            if pvi_d == bvc_d or evc_d == pvi_d:
-                return None
-
-            # 進入勾配 g1、退出勾配 g2
-            g1 = (pvi_h - bvc_h) / (pvi_d - bvc_d)
-            g2 = (evc_h - pvi_h) / (evc_d - pvi_d)
-
-            # 縦断曲線長
-            L = evc_d - bvc_d
             x = distance - bvc_d
 
-            if L == 0:
-                return None
-
-            # 放物線による縦断曲線高
+            # 放物線縦断曲線
+            # 高さ = BVC高 + g1*x + ((g2-g1)/(2L))*x^2
             height = bvc_h + g1 * x + ((g2 - g1) / (2 * L)) * (x ** 2)
 
             return {
