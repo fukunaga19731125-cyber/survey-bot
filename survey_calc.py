@@ -7,7 +7,7 @@ ROAD_PROFILE_CSV = "road_profile.csv"
 VERTICAL_CURVE_CSV = "vertical_curve.csv"
 
 # 通常の表示小数桁
-DEFAULT_DECIMALS = 2
+DEFAULT_DECIMALS = 3
 
 
 def parse_station(station_text, pitch=20.0):
