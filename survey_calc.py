@@ -1,4 +1,9 @@
+import csv
+import os
 import re
+
+
+CSV_FILE = "road_profile.csv"
 
 
 def parse_station(station_text, pitch=20.0):
@@ -20,7 +25,7 @@ def parse_station(station_text, pitch=20.0):
     match = re.search(pattern, text)
 
     if not match:
-        raise ValueError(f"測点の形式が読み取れません: {station_text}")
+        raise ValueError("測点の形式が読み取れません。例: No.1+2.0")
 
     no_number = int(match.group(1))
     plus_value = float(match.group(2)) if match.group(2) else 0.0
@@ -28,79 +33,51 @@ def parse_station(station_text, pitch=20.0):
     return no_number * pitch + plus_value
 
 
-def calculate_road_center_height(message):
+def load_road_profile():
     """
-    道路計画中心高を計算する。
-    入力例:
-    計画高
-    ピッチ=20
-    No.1,10.000
-    No.2,9.800
-    求める=No.1+2.0
+    road_profile.csv を読み込む。
+    必要な列:
+    station,distance,height
     """
+    if not os.path.exists(CSV_FILE):
+        raise FileNotFoundError("road_profile.csv が見つかりません。GitHubに追加してください。")
 
-    lines = [line.strip() for line in message.splitlines() if line.strip()]
-
-    pitch = 20.0
-    target_station_text = None
     points = []
 
-    for line in lines:
-        line = line.replace("，", ",")
-        line = line.replace("＝", "=")
+    with open(CSV_FILE, mode="r", encoding="utf-8-sig") as file:
+        reader = csv.DictReader(file)
 
-        if line.startswith("ピッチ"):
-            try:
-                pitch = float(line.split("=")[1].strip())
-            except Exception:
-                return "ピッチの指定が読み取れません。例: ピッチ=20"
+        required_columns = {"station", "distance", "height"}
+        if not required_columns.issubset(reader.fieldnames):
+            raise ValueError("CSVの見出しは station,distance,height にしてください。")
 
-        elif line.startswith("求める"):
-            try:
-                target_station_text = line.split("=")[1].strip()
-            except Exception:
-                return "求める測点が読み取れません。例: 求める=No.1+2.0"
+        for row in reader:
+            station = row["station"].strip()
+            distance = float(row["distance"])
+            height = float(row["height"])
 
-        elif line.lower().startswith("no") or line.startswith("No") or line.startswith("Ｎｏ"):
-            parts = [p.strip() for p in line.split(",")]
+            points.append({
+                "station": station,
+                "distance": distance,
+                "height": height
+            })
 
-            if len(parts) != 2:
-                return "測点と高さはカンマで区切ってください。例: No.1,10.000"
-
-            station_text = parts[0]
-            height_text = parts[1]
-
-            try:
-                distance = parse_station(station_text, pitch)
-                height = float(height_text)
-                points.append({
-                    "station": station_text,
-                    "distance": distance,
-                    "height": height
-                })
-            except Exception as e:
-                return f"測点データが読み取れません。\n{str(e)}"
-
-    if not points:
-        return (
-            "計画高データがありません。\n\n"
-            "入力例:\n"
-            "計画高\n"
-            "ピッチ=20\n"
-            "No.1,10.000\n"
-            "No.2,9.800\n"
-            "求める=No.1+2.0"
-        )
-
-    if not target_station_text:
-        return "求める測点がありません。例: 求める=No.1+2.0"
+    if len(points) < 2:
+        raise ValueError("CSVには最低2点以上のデータが必要です。")
 
     points = sorted(points, key=lambda x: x["distance"])
+    return points
 
-    try:
-        target_distance = parse_station(target_station_text, pitch)
-    except Exception as e:
-        return str(e)
+
+def calculate_center_height(target_station_text):
+    """
+    CSVの道路中心高データから、指定測点の高さを計算する。
+    """
+    points = load_road_profile()
+
+    # 基本は20mピッチ
+    pitch = 20.0
+    target_distance = parse_station(target_station_text, pitch)
 
     before_point = None
     after_point = None
@@ -115,7 +92,7 @@ def calculate_road_center_height(message):
             break
 
     if before_point is None or after_point is None:
-        return "求める測点が、入力した計画高データの範囲外です。"
+        return "入力した測点がCSVデータの範囲外です。"
 
     d1 = before_point["distance"]
     h1 = before_point["height"]
@@ -123,64 +100,38 @@ def calculate_road_center_height(message):
     h2 = after_point["height"]
 
     if d2 == d1:
-        return "同じ距離の測点が重複しています。"
+        return "CSV内に同じ距離のデータがあります。確認してください。"
 
     slope = (h2 - h1) / (d2 - d1)
     target_height = h1 + slope * (target_distance - d1)
 
-    # 返答を短くする
-    return f"{target_station_text}　高さ{target_height:.3f}m"
-
-
-def calculate_simple_average(message):
-    """
-    以前の簡易平均計算。
-    """
-    text = message.replace("\n", " ")
-    text = text.replace(",", " ")
-    text = text.replace("、", " ")
-
-    parts = text.split()
-    values = []
-
-    for part in parts:
-        try:
-            values.append(float(part))
-        except ValueError:
-            return (
-                "入力内容が読み取れません。\n\n"
-                "入力例:\n"
-                "計画高\n"
-                "ピッチ=20\n"
-                "No.1,10.000\n"
-                "No.2,9.800\n"
-                "求める=No.1+2.0"
-            )
-
-    if not values:
-        return "まだデータがありません。"
-
-    total = sum(values)
-    average = total / len(values)
-
-    return (
-        f"測定数: {len(values)}点\n"
-        f"合計: {total:g}\n"
-        f"平均: {average:.3f}"
-    )
+    return f"{target_station_text}　高さ{target_height:.2f}m"
 
 
 def calculate_survey_result(message):
     """
-    LINEから送られた文字を判定して計算する。
+    LINEから送られた文字を受け取る。
+    入力例:
+    No.1+2.0
+    No.2+5.5
+    使い方
     """
 
     if not message:
-        return "まだデータがありません。"
+        return "測点を入力してください。例: No.1+2.0"
 
     text = message.strip()
 
-    if text.startswith("計画高") or text.startswith("中心高") or text.startswith("道路"):
-        return calculate_road_center_height(text)
+    if text in ["使い方", "ヘルプ", "help"]:
+        return (
+            "道路計画中心高を計算します。\n\n"
+            "入力例:\n"
+            "No.1+2.0\n"
+            "No.2+5.5\n\n"
+            "CSVは road_profile.csv を使用します。"
+        )
 
-    return calculate_simple_average(text)
+    try:
+        return calculate_center_height(text)
+    except Exception as e:
+        return f"計算できませんでした。\n{str(e)}"
