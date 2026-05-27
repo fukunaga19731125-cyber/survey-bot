@@ -36,6 +36,9 @@ def get_value(row, names, default=""):
 
 
 def to_float(value_text):
+    """
+    m、％、カンマなどを除去して数値化する。
+    """
     text = str(value_text).strip()
     text = text.replace("ｍ", "")
     text = text.replace("m", "")
@@ -53,6 +56,12 @@ def to_float(value_text):
 
 
 def parse_station(station_text, pitch=20.0):
+    """
+    測点文字を距離に変換する。
+    例:
+    No.1       -> 20.0
+    No.1+2.0   -> 22.0
+    """
     text = normalize_text(station_text)
 
     pattern = r"No\.?\s*(\d+)(?:\+([0-9.]+))?"
@@ -68,6 +77,11 @@ def parse_station(station_text, pitch=20.0):
 
 
 def format_station_from_distance(distance, pitch=20.0):
+    """
+    距離から測点表示を作る。
+    例:
+    65.0 -> No.3+5
+    """
     no_number = int(distance // pitch)
     plus_value = distance - no_number * pitch
 
@@ -79,6 +93,13 @@ def format_station_from_distance(distance, pitch=20.0):
 
 
 def extract_station_text(message):
+    """
+    LINEメッセージ内から No.○+○ を抜き出す。
+    例:
+    No.3+5
+    No.3+5 右
+    横断 No.3+5
+    """
     text = normalize_text(message)
 
     pattern = r"No\.?\s*\d+(?:\+[0-9.]+)?"
@@ -93,6 +114,13 @@ def extract_station_text(message):
 
 
 def extract_decimals(message):
+    """
+    小数桁をメッセージから取得する。
+    例:
+    No.3+5 小数3
+    No.3+5 小数=3
+    No.3+5 桁3
+    """
     text = normalize_text(message)
 
     patterns = [
@@ -115,6 +143,9 @@ def extract_decimals(message):
 
 
 def extract_side(message):
+    """
+    左右指定を取得する。
+    """
     text = normalize_text(message)
 
     if "左" in text:
@@ -149,6 +180,7 @@ def load_road_profile():
             distance_text = get_value(row, ["距離", "distance"])
             height_text = get_value(row, ["計画中心高", "中心高", "height"])
 
+            # 空白行は無視
             if not station and not distance_text and not height_text:
                 continue
 
@@ -191,6 +223,7 @@ def load_vertical_curves():
             g1_percent_text = get_value(row, ["進入勾配", "g1_percent"])
             g2_percent_text = get_value(row, ["退出勾配", "g2_percent"])
 
+            # 空白行は無視
             if (
                 not curve_name
                 and not pvi_station
@@ -214,9 +247,11 @@ def load_vertical_curves():
             curve_radius = get_value(row, ["曲線半径", "curve_radius"])
             memo = get_value(row, ["メモ", "memo"])
 
+            # PVIを中心としてBVC・EVCを計算
             bvc_distance = pvi_distance - curve_length / 2
             evc_distance = pvi_distance + curve_length / 2
 
+            # 勾配%を小数勾配に変換
             g1 = g1_percent / 100
             g2 = g2_percent / 100
 
@@ -274,6 +309,7 @@ def load_cross_sections():
             right_width_text = get_value(row, ["右幅", "right_width"])
             right_slope_text = get_value(row, ["右勾配", "right_slope"])
 
+            # 空白行は無視
             if (
                 not section_name
                 and not start_station
@@ -342,6 +378,7 @@ def load_horizontal_curves():
             right_width_text = get_value(row, ["右幅", "right_width"])
             right_slope_text = get_value(row, ["右勾配", "right_slope"])
 
+            # 空白行は無視
             if (
                 not curve_name
                 and not bc_station
@@ -379,6 +416,10 @@ def load_horizontal_curves():
 
 
 def calculate_vertical_curve_height(distance):
+    """
+    縦断曲線内ならバーチカル計算。
+    曲線外なら None。
+    """
     curves = load_vertical_curves()
 
     for curve in curves:
@@ -395,14 +436,17 @@ def calculate_vertical_curve_height(distance):
 
             return {
                 "height": height,
-                "method": f"縦断曲線 {curve['curve_name']}",
-                "curve": curve
+                "method": "縦断：曲線区間",
+                "curve_name": curve["curve_name"]
             }
 
     return None
 
 
 def calculate_straight_height(distance):
+    """
+    road_profile.csv から直線補間で高さを計算。
+    """
     points = load_road_profile()
 
     before_point = None
@@ -433,13 +477,18 @@ def calculate_straight_height(distance):
 
     return {
         "height": height,
-        "method": "直線補間",
+        "method": "縦断：直線区間",
         "before_point": before_point,
         "after_point": after_point
     }
 
 
 def get_center_height_result(station_text):
+    """
+    測点から道路中心高を取得。
+    縦断曲線内なら縦断曲線を優先。
+    曲線外なら直線補間。
+    """
     distance = parse_station(station_text)
 
     vertical_result = calculate_vertical_curve_height(distance)
@@ -449,7 +498,7 @@ def get_center_height_result(station_text):
             "station": station_text,
             "distance": distance,
             "height": vertical_result["height"],
-            "method": vertical_result["method"]
+            "vertical_status": vertical_result["method"]
         }
 
     straight_result = calculate_straight_height(distance)
@@ -468,11 +517,14 @@ def get_center_height_result(station_text):
         "station": station_text,
         "distance": distance,
         "height": straight_result["height"],
-        "method": straight_result["method"]
+        "vertical_status": straight_result["method"]
     }
 
 
 def find_cross_section(distance):
+    """
+    通常横断区間を探す。
+    """
     sections = load_cross_sections()
 
     for section in sections:
@@ -492,7 +544,7 @@ def find_cross_section(distance):
 
 def find_horizontal_curve(distance):
     """
-    平面曲線内なら、曲線用の横断条件を返す。
+    平面曲線内なら曲線データを返す。
     クロソイドなしなので BC距離 <= 測点距離 <= EC距離 で判定。
     """
     curves = load_horizontal_curves()
@@ -502,6 +554,20 @@ def find_horizontal_curve(distance):
             return curve
 
     return None
+
+
+def get_alignment_status(distance, vertical_status):
+    """
+    平面・縦断の区間種別を返す。
+    """
+    horizontal_curve = find_horizontal_curve(distance)
+
+    if horizontal_curve is not None:
+        plane_status = "平面：曲線区間"
+    else:
+        plane_status = "平面：直線区間"
+
+    return plane_status, vertical_status
 
 
 def get_cross_condition(distance):
@@ -515,6 +581,7 @@ def get_cross_condition(distance):
     if horizontal_curve is not None:
         return {
             "source": "horizontal",
+            "plane_status": "平面：曲線区間",
             "left_width": horizontal_curve["left_width"],
             "left_slope": horizontal_curve["left_slope"],
             "right_width": horizontal_curve["right_width"],
@@ -526,6 +593,7 @@ def get_cross_condition(distance):
 
     return {
         "source": "cross",
+        "plane_status": "平面：直線区間",
         "left_width": section["left_width"],
         "left_slope": section["left_slope"],
         "right_width": section["right_width"],
@@ -535,18 +603,32 @@ def get_cross_condition(distance):
 
 
 def calculate_center_height(message):
+    """
+    中心高のみを返す。
+    """
     station_text = extract_station_text(message)
     decimals = extract_decimals(message)
 
     result = get_center_height_result(station_text)
 
+    plane_status, vertical_status = get_alignment_status(
+        result["distance"],
+        result["vertical_status"]
+    )
+
     return (
         f"{station_text}　高さ{result['height']:.{decimals}f}m\n"
-        f"{result['method']}"
+        f"{plane_status}\n"
+        f"{vertical_status}"
     )
 
 
 def calculate_side_height(message):
+    """
+    No.3+5 右
+    No.3+5 左
+    のような入力から、左右どちらかの端部高さを返す。
+    """
     station_text = extract_station_text(message)
     side = extract_side(message)
     decimals = extract_decimals(message)
@@ -571,16 +653,26 @@ def calculate_side_height(message):
 
     side_height = center_height + width * (slope / 100)
 
+    plane_status, vertical_status = get_alignment_status(
+        distance,
+        center_result["vertical_status"]
+    )
+
     return (
         f"{station_text} {side_label}\n"
         f"高さ{side_height:.{decimals}f}m\n"
         f"勾配{slope:.3f}%\n"
         f"{side_label}{width:.3f}m\n"
-        f"{center_result['method']}"
+        f"{plane_status}\n"
+        f"{vertical_status}"
     )
 
 
 def calculate_cross_both(message):
+    """
+    横断 No.3+5
+    のような入力で左右両方を返す。
+    """
     station_text = extract_station_text(message)
     decimals = extract_decimals(message)
 
@@ -593,16 +685,26 @@ def calculate_cross_both(message):
     left_height = center_height + condition["left_width"] * (condition["left_slope"] / 100)
     right_height = center_height + condition["right_width"] * (condition["right_slope"] / 100)
 
+    plane_status, vertical_status = get_alignment_status(
+        distance,
+        center_result["vertical_status"]
+    )
+
     return (
         f"{station_text}\n"
         f"中心高{center_height:.{decimals}f}m\n"
         f"左端{left_height:.{decimals}f}m\n"
         f"右端{right_height:.{decimals}f}m\n"
-        f"{center_result['method']}"
+        f"{plane_status}\n"
+        f"{vertical_status}"
     )
 
 
 def check_data_status():
+    """
+    CSVデータ確認用。
+    LINEで「データ確認」と送る。
+    """
     road_points = load_road_profile()
     vertical_curves = load_vertical_curves()
 
@@ -656,6 +758,15 @@ def check_data_status():
 
 
 def calculate_survey_result(message):
+    """
+    LINEから送られた文字を受け取る。
+    入力例:
+    No.3+5
+    No.3+5 右
+    No.3+5 左
+    横断 No.3+5
+    データ確認
+    """
     if not message:
         return "測点を入力してください。例: No.1+2.0"
 
