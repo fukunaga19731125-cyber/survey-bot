@@ -6,15 +6,12 @@ import re
 ROAD_PROFILE_CSV = "road_profile.csv"
 VERTICAL_CURVE_CSV = "vertical_curve.csv"
 CROSS_SECTION_CSV = "cross_section.csv"
+HORIZONTAL_CURVE_CSV = "horizontal_curve.csv"
 
-# 通常の表示小数桁
 DEFAULT_DECIMALS = 3
 
 
 def normalize_text(text):
-    """
-    全角・表記ゆれを整える。
-    """
     text = str(text).strip()
     text = text.replace("Ｎｏ", "No")
     text = text.replace("ｎｏ", "No")
@@ -28,13 +25,34 @@ def normalize_text(text):
     return text
 
 
+def get_value(row, names, default=""):
+    """
+    CSVの列名を日本語・英語どちらでも読めるようにする。
+    """
+    for name in names:
+        if name in row and row[name] is not None:
+            return str(row[name]).strip()
+    return default
+
+
+def to_float(value_text):
+    text = str(value_text).strip()
+    text = text.replace("ｍ", "")
+    text = text.replace("m", "")
+    text = text.replace("Ｍ", "")
+    text = text.replace("M", "")
+    text = text.replace("％", "")
+    text = text.replace("%", "")
+    text = text.replace(",", "")
+    text = text.strip()
+
+    if text == "":
+        raise ValueError("数値欄に空白があります。CSVを確認してください。")
+
+    return float(text)
+
+
 def parse_station(station_text, pitch=20.0):
-    """
-    測点文字を距離に変換する。
-    例:
-    No.1       -> 20.0
-    No.1+2.0   -> 22.0
-    """
     text = normalize_text(station_text)
 
     pattern = r"No\.?\s*(\d+)(?:\+([0-9.]+))?"
@@ -50,11 +68,6 @@ def parse_station(station_text, pitch=20.0):
 
 
 def format_station_from_distance(distance, pitch=20.0):
-    """
-    距離から測点表示を作る。
-    例:
-    65.0 -> No.3+5
-    """
     no_number = int(distance // pitch)
     plus_value = distance - no_number * pitch
 
@@ -66,13 +79,6 @@ def format_station_from_distance(distance, pitch=20.0):
 
 
 def extract_station_text(message):
-    """
-    LINEメッセージ内から No.○+○ を抜き出す。
-    例:
-    No.3+5
-    No.3+5 右
-    横断 No.3+5
-    """
     text = normalize_text(message)
 
     pattern = r"No\.?\s*\d+(?:\+[0-9.]+)?"
@@ -87,13 +93,6 @@ def extract_station_text(message):
 
 
 def extract_decimals(message):
-    """
-    小数桁をメッセージから取得する。
-    例:
-    No.3+5 小数3
-    No.3+5 小数=3
-    No.3+5 桁3
-    """
     text = normalize_text(message)
 
     patterns = [
@@ -106,23 +105,16 @@ def extract_decimals(message):
         match = re.search(pattern, text)
         if match:
             decimals = int(match.group(1))
-
             if decimals < 0:
                 decimals = 0
             if decimals > 4:
                 decimals = 4
-
             return decimals
 
     return DEFAULT_DECIMALS
 
 
 def extract_side(message):
-    """
-    左右指定を取得する。
-    戻り値:
-    "left", "right", None
-    """
     text = normalize_text(message)
 
     if "左" in text:
@@ -134,27 +126,14 @@ def extract_side(message):
     return None
 
 
-def to_float(value_text):
-    """
-    m、％、空白などを除去して数値化する。
-    """
-    text = str(value_text).strip()
-    text = text.replace("ｍ", "")
-    text = text.replace("m", "")
-    text = text.replace("Ｍ", "")
-    text = text.replace("M", "")
-    text = text.replace("％", "")
-    text = text.replace("%", "")
-    text = text.replace(",", "")
-    text = text.strip()
-
-    return float(text)
-
-
 def load_road_profile():
     """
-    road_profile.csv を読み込む。
-    必要列:
+    road_profile.csv
+
+    日本語列名:
+    測点,距離,計画中心高
+
+    英語列名:
     station,distance,height
     """
     if not os.path.exists(ROAD_PROFILE_CSV):
@@ -165,16 +144,11 @@ def load_road_profile():
     with open(ROAD_PROFILE_CSV, mode="r", encoding="utf-8-sig") as file:
         reader = csv.DictReader(file)
 
-        required_columns = {"station", "distance", "height"}
-        if not reader.fieldnames or not required_columns.issubset(reader.fieldnames):
-            raise ValueError("road_profile.csv の見出しは station,distance,height にしてください。")
-
         for row in reader:
-            station = row.get("station", "").strip()
-            distance_text = row.get("distance", "").strip()
-            height_text = row.get("height", "").strip()
+            station = get_value(row, ["測点", "station"])
+            distance_text = get_value(row, ["距離", "distance"])
+            height_text = get_value(row, ["計画中心高", "中心高", "height"])
 
-            # 空白行は無視
             if not station and not distance_text and not height_text:
                 continue
 
@@ -192,11 +166,13 @@ def load_road_profile():
 
 def load_vertical_curves():
     """
-    vertical_curve.csv を読み込む。
-    必要列:
-    curve_name,pvi_station,pvi_distance,pvi_height,curve_length,g1_percent,g2_percent
-    任意列:
-    curve_radius,memo
+    vertical_curve.csv
+
+    日本語列名:
+    曲線名,変化点測点,変化点距離,変化点高,曲線長,進入勾配,退出勾配,曲線半径,メモ
+
+    英語列名:
+    curve_name,pvi_station,pvi_distance,pvi_height,curve_length,g1_percent,g2_percent,curve_radius,memo
     """
     if not os.path.exists(VERTICAL_CURVE_CSV):
         return []
@@ -206,33 +182,15 @@ def load_vertical_curves():
     with open(VERTICAL_CURVE_CSV, mode="r", encoding="utf-8-sig") as file:
         reader = csv.DictReader(file)
 
-        required_columns = {
-            "curve_name",
-            "pvi_station",
-            "pvi_distance",
-            "pvi_height",
-            "curve_length",
-            "g1_percent",
-            "g2_percent"
-        }
-
-        if not reader.fieldnames or not required_columns.issubset(reader.fieldnames):
-            raise ValueError(
-                "vertical_curve.csv の見出しは、最低限 "
-                "curve_name,pvi_station,pvi_distance,pvi_height,curve_length,g1_percent,g2_percent "
-                "にしてください。"
-            )
-
         for row in reader:
-            curve_name = row.get("curve_name", "").strip()
-            pvi_station = row.get("pvi_station", "").strip()
-            pvi_distance_text = row.get("pvi_distance", "").strip()
-            pvi_height_text = row.get("pvi_height", "").strip()
-            curve_length_text = row.get("curve_length", "").strip()
-            g1_percent_text = row.get("g1_percent", "").strip()
-            g2_percent_text = row.get("g2_percent", "").strip()
+            curve_name = get_value(row, ["曲線名", "curve_name"])
+            pvi_station = get_value(row, ["変化点測点", "pvi_station"])
+            pvi_distance_text = get_value(row, ["変化点距離", "pvi_distance"])
+            pvi_height_text = get_value(row, ["変化点高", "pvi_height"])
+            curve_length_text = get_value(row, ["曲線長", "curve_length"])
+            g1_percent_text = get_value(row, ["進入勾配", "g1_percent"])
+            g2_percent_text = get_value(row, ["退出勾配", "g2_percent"])
 
-            # 空白行は無視
             if (
                 not curve_name
                 and not pvi_station
@@ -253,21 +211,12 @@ def load_vertical_curves():
             if curve_length <= 0:
                 raise ValueError(f"{curve_name} の曲線長が0以下です。")
 
-            curve_radius = row.get("curve_radius", "")
-            if curve_radius is None:
-                curve_radius = ""
-            curve_radius = str(curve_radius).strip()
+            curve_radius = get_value(row, ["曲線半径", "curve_radius"])
+            memo = get_value(row, ["メモ", "memo"])
 
-            memo = row.get("memo", "")
-            if memo is None:
-                memo = ""
-            memo = str(memo).strip()
-
-            # PVIを中心としてBVC・EVCを計算
             bvc_distance = pvi_distance - curve_length / 2
             evc_distance = pvi_distance + curve_length / 2
 
-            # 勾配%を小数勾配に変換
             g1 = g1_percent / 100
             g2 = g2_percent / 100
 
@@ -298,10 +247,13 @@ def load_vertical_curves():
 
 def load_cross_sections():
     """
-    cross_section.csv を読み込む。
-    必要列:
-    section_name,start_station,start_distance,end_station,end_distance,
-    left_width,left_slope,right_width,right_slope
+    cross_section.csv
+
+    日本語列名:
+    区間名,開始測点,開始距離,終了測点,終了距離,左幅,左勾配,右幅,右勾配,メモ
+
+    英語列名:
+    section_name,start_station,start_distance,end_station,end_distance,left_width,left_slope,right_width,right_slope,memo
     """
     if not os.path.exists(CROSS_SECTION_CSV):
         raise FileNotFoundError("cross_section.csv が見つかりません。")
@@ -311,37 +263,17 @@ def load_cross_sections():
     with open(CROSS_SECTION_CSV, mode="r", encoding="utf-8-sig") as file:
         reader = csv.DictReader(file)
 
-        required_columns = {
-            "section_name",
-            "start_station",
-            "start_distance",
-            "end_station",
-            "end_distance",
-            "left_width",
-            "left_slope",
-            "right_width",
-            "right_slope"
-        }
-
-        if not reader.fieldnames or not required_columns.issubset(reader.fieldnames):
-            raise ValueError(
-                "cross_section.csv の見出しは "
-                "section_name,start_station,start_distance,end_station,end_distance,"
-                "left_width,left_slope,right_width,right_slope にしてください。"
-            )
-
         for row in reader:
-            section_name = row.get("section_name", "").strip()
-            start_station = row.get("start_station", "").strip()
-            start_distance_text = row.get("start_distance", "").strip()
-            end_station = row.get("end_station", "").strip()
-            end_distance_text = row.get("end_distance", "").strip()
-            left_width_text = row.get("left_width", "").strip()
-            left_slope_text = row.get("left_slope", "").strip()
-            right_width_text = row.get("right_width", "").strip()
-            right_slope_text = row.get("right_slope", "").strip()
+            section_name = get_value(row, ["区間名", "section_name"])
+            start_station = get_value(row, ["開始測点", "start_station"])
+            start_distance_text = get_value(row, ["開始距離", "start_distance"])
+            end_station = get_value(row, ["終了測点", "end_station"])
+            end_distance_text = get_value(row, ["終了距離", "end_distance"])
+            left_width_text = get_value(row, ["左幅", "left_width"])
+            left_slope_text = get_value(row, ["左勾配", "left_slope"])
+            right_width_text = get_value(row, ["右幅", "right_width"])
+            right_slope_text = get_value(row, ["右勾配", "right_slope"])
 
-            # 空白行は無視
             if (
                 not section_name
                 and not start_station
@@ -355,9 +287,6 @@ def load_cross_sections():
             ):
                 continue
 
-            if not end_distance_text:
-                raise ValueError(f"{section_name} の end_distance が空白です。")
-
             section = {
                 "section_name": section_name,
                 "start_station": start_station,
@@ -368,7 +297,7 @@ def load_cross_sections():
                 "left_slope": to_float(left_slope_text),
                 "right_width": to_float(right_width_text),
                 "right_slope": to_float(right_slope_text),
-                "memo": str(row.get("memo", "") or "").strip()
+                "memo": get_value(row, ["メモ", "memo"])
             }
 
             if section["end_distance"] < section["start_distance"]:
@@ -382,11 +311,74 @@ def load_cross_sections():
     return sorted(sections, key=lambda x: x["start_distance"])
 
 
+def load_horizontal_curves():
+    """
+    horizontal_curve.csv
+
+    日本語列名:
+    曲線名,BC測点,BC距離,EC測点,EC距離,半径,方向,左幅,左勾配,右幅,右勾配,メモ
+
+    英語列名:
+    curve_name,bc_station,bc_distance,ec_station,ec_distance,radius,direction,left_width,left_slope,right_width,right_slope,memo
+    """
+    if not os.path.exists(HORIZONTAL_CURVE_CSV):
+        return []
+
+    curves = []
+
+    with open(HORIZONTAL_CURVE_CSV, mode="r", encoding="utf-8-sig") as file:
+        reader = csv.DictReader(file)
+
+        for row in reader:
+            curve_name = get_value(row, ["曲線名", "curve_name"])
+            bc_station = get_value(row, ["BC測点", "bc_station"])
+            bc_distance_text = get_value(row, ["BC距離", "bc_distance"])
+            ec_station = get_value(row, ["EC測点", "ec_station"])
+            ec_distance_text = get_value(row, ["EC距離", "ec_distance"])
+            radius_text = get_value(row, ["半径", "radius"])
+            direction = get_value(row, ["方向", "direction"])
+            left_width_text = get_value(row, ["左幅", "left_width"])
+            left_slope_text = get_value(row, ["左勾配", "left_slope"])
+            right_width_text = get_value(row, ["右幅", "right_width"])
+            right_slope_text = get_value(row, ["右勾配", "right_slope"])
+
+            if (
+                not curve_name
+                and not bc_station
+                and not bc_distance_text
+                and not ec_station
+                and not ec_distance_text
+                and not left_width_text
+                and not left_slope_text
+                and not right_width_text
+                and not right_slope_text
+            ):
+                continue
+
+            curve = {
+                "curve_name": curve_name,
+                "bc_station": bc_station,
+                "bc_distance": to_float(bc_distance_text),
+                "ec_station": ec_station,
+                "ec_distance": to_float(ec_distance_text),
+                "radius": to_float(radius_text) if radius_text else 0.0,
+                "direction": direction,
+                "left_width": to_float(left_width_text),
+                "left_slope": to_float(left_slope_text),
+                "right_width": to_float(right_width_text),
+                "right_slope": to_float(right_slope_text),
+                "memo": get_value(row, ["メモ", "memo"])
+            }
+
+            if curve["ec_distance"] < curve["bc_distance"]:
+                raise ValueError(f"{curve_name} のEC距離がBC距離より小さいです。")
+
+            curves.append(curve)
+
+    return sorted(curves, key=lambda x: x["bc_distance"])
+
+
 def calculate_vertical_curve_height(distance):
-    """
-    縦断曲線内ならバーチカル計算を行う。
-    曲線外なら None を返す。
-    """
     curves = load_vertical_curves()
 
     for curve in curves:
@@ -399,8 +391,6 @@ def calculate_vertical_curve_height(distance):
 
         if bvc_d <= distance <= evc_d:
             x = distance - bvc_d
-
-            # 放物線縦断曲線
             height = bvc_h + g1 * x + ((g2 - g1) / (2 * L)) * (x ** 2)
 
             return {
@@ -413,9 +403,6 @@ def calculate_vertical_curve_height(distance):
 
 
 def calculate_straight_height(distance):
-    """
-    road_profile.csv から直線補間で高さを計算する。
-    """
     points = load_road_profile()
 
     before_point = None
@@ -453,11 +440,6 @@ def calculate_straight_height(distance):
 
 
 def get_center_height_result(station_text):
-    """
-    測点から道路中心高を取得する。
-    縦断曲線内なら縦断曲線を優先。
-    曲線外なら直線補間。
-    """
     distance = parse_station(station_text)
 
     vertical_result = calculate_vertical_curve_height(distance)
@@ -491,37 +473,68 @@ def get_center_height_result(station_text):
 
 
 def find_cross_section(distance):
-    """
-    指定距離が入る横断設計区間を探す。
-    """
     sections = load_cross_sections()
 
     for section in sections:
-        start_d = section["start_distance"]
-        end_d = section["end_distance"]
-
-        # 境界上の重複を避けるため、最後以外は start <= x < end
-        if start_d <= distance < end_d:
+        if section["start_distance"] <= distance < section["end_distance"]:
             return section
 
-    # 最終点ぴったりの場合の救済
     last = sections[-1]
     if abs(distance - last["end_distance"]) < 0.0001:
         return last
 
     first = sections[0]
-    last = sections[-1]
-
     raise ValueError(
         "入力した測点が横断設計データの範囲外です。\n"
         f"横断登録範囲：{first['start_station']} ～ {last['end_station']}"
     )
 
 
+def find_horizontal_curve(distance):
+    """
+    平面曲線内なら、曲線用の横断条件を返す。
+    クロソイドなしなので BC距離 <= 測点距離 <= EC距離 で判定。
+    """
+    curves = load_horizontal_curves()
+
+    for curve in curves:
+        if curve["bc_distance"] <= distance <= curve["ec_distance"]:
+            return curve
+
+    return None
+
+
+def get_cross_condition(distance):
+    """
+    横断条件の優先順位:
+    1. 平面曲線 horizontal_curve.csv
+    2. 通常横断 cross_section.csv
+    """
+    horizontal_curve = find_horizontal_curve(distance)
+
+    if horizontal_curve is not None:
+        return {
+            "source": "horizontal",
+            "left_width": horizontal_curve["left_width"],
+            "left_slope": horizontal_curve["left_slope"],
+            "right_width": horizontal_curve["right_width"],
+            "right_slope": horizontal_curve["right_slope"],
+            "curve_name": horizontal_curve["curve_name"]
+        }
+
+    section = find_cross_section(distance)
+
+    return {
+        "source": "cross",
+        "left_width": section["left_width"],
+        "left_slope": section["left_slope"],
+        "right_width": section["right_width"],
+        "right_slope": section["right_slope"],
+        "section_name": section["section_name"]
+    }
+
+
 def calculate_center_height(message):
-    """
-    中心高のみを返す。
-    """
     station_text = extract_station_text(message)
     decimals = extract_decimals(message)
 
@@ -534,11 +547,6 @@ def calculate_center_height(message):
 
 
 def calculate_side_height(message):
-    """
-    No.3+5 右
-    No.3+5 左
-    のような入力から、左右どちらかの端部高さを返す。
-    """
     station_text = extract_station_text(message)
     side = extract_side(message)
     decimals = extract_decimals(message)
@@ -550,15 +558,15 @@ def calculate_side_height(message):
     center_height = center_result["height"]
     distance = center_result["distance"]
 
-    section = find_cross_section(distance)
+    condition = get_cross_condition(distance)
 
     if side == "right":
-        width = section["right_width"]
-        slope = section["right_slope"]
+        width = condition["right_width"]
+        slope = condition["right_slope"]
         side_label = "右"
     else:
-        width = section["left_width"]
-        slope = section["left_slope"]
+        width = condition["left_width"]
+        slope = condition["left_slope"]
         side_label = "左"
 
     side_height = center_height + width * (slope / 100)
@@ -573,10 +581,6 @@ def calculate_side_height(message):
 
 
 def calculate_cross_both(message):
-    """
-    横断 No.3+5
-    のような入力で左右両方を返す。
-    """
     station_text = extract_station_text(message)
     decimals = extract_decimals(message)
 
@@ -584,10 +588,10 @@ def calculate_cross_both(message):
     center_height = center_result["height"]
     distance = center_result["distance"]
 
-    section = find_cross_section(distance)
+    condition = get_cross_condition(distance)
 
-    left_height = center_height + section["left_width"] * (section["left_slope"] / 100)
-    right_height = center_height + section["right_width"] * (section["right_slope"] / 100)
+    left_height = center_height + condition["left_width"] * (condition["left_slope"] / 100)
+    right_height = center_height + condition["right_width"] * (condition["right_slope"] / 100)
 
     return (
         f"{station_text}\n"
@@ -599,40 +603,28 @@ def calculate_cross_both(message):
 
 
 def check_data_status():
-    """
-    CSVデータ確認用。
-    LINEで「データ確認」と送る。
-    """
     road_points = load_road_profile()
     vertical_curves = load_vertical_curves()
 
     first_point = road_points[0]
     last_point = road_points[-1]
 
-    road_count = len(road_points)
-    curve_count = len(vertical_curves)
-
     message = (
         "データ確認\n\n"
-        f"road_profile：{road_count}点\n"
+        f"road_profile：{len(road_points)}点\n"
         f"登録範囲：{first_point['station']} ～ {last_point['station']}\n\n"
-        f"vertical_curve：{curve_count}曲線"
+        f"vertical_curve：{len(vertical_curves)}曲線"
     )
 
-    if curve_count > 0:
+    if len(vertical_curves) > 0:
         curve_lines = []
-
         for curve in vertical_curves:
             bvc_station = format_station_from_distance(curve["bvc_distance"])
             evc_station = format_station_from_distance(curve["evc_distance"])
-
-            curve_lines.append(
-                f"{curve['curve_name']}：{bvc_station} ～ {evc_station}"
-            )
+            curve_lines.append(f"{curve['curve_name']}：{bvc_station} ～ {evc_station}")
 
         message += "\n" + "\n".join(curve_lines)
 
-    # cross_section.csv の確認
     if os.path.exists(CROSS_SECTION_CSV):
         sections = load_cross_sections()
         first_section = sections[0]
@@ -646,19 +638,24 @@ def check_data_status():
     else:
         message += "\n\ncross_section：未登録"
 
+    if os.path.exists(HORIZONTAL_CURVE_CSV):
+        horizontal_curves = load_horizontal_curves()
+        message += f"\n\nhorizontal_curve：{len(horizontal_curves)}曲線"
+
+        if len(horizontal_curves) > 0:
+            curve_lines = []
+            for curve in horizontal_curves:
+                curve_lines.append(
+                    f"{curve['curve_name']}：{curve['bc_station']} ～ {curve['ec_station']}"
+                )
+            message += "\n" + "\n".join(curve_lines)
+    else:
+        message += "\n\nhorizontal_curve：未登録"
+
     return message
 
 
 def calculate_survey_result(message):
-    """
-    LINEから送られた文字を受け取る。
-    入力例:
-    No.3+5
-    No.3+5 右
-    No.3+5 左
-    横断 No.3+5
-    データ確認
-    """
     if not message:
         return "測点を入力してください。例: No.1+2.0"
 
@@ -686,21 +683,18 @@ def calculate_survey_result(message):
         except Exception as e:
             return f"データ確認できませんでした。\n{str(e)}"
 
-    # 横断 No.3+5 → 左右両方
     if text.startswith("横断"):
         try:
             return calculate_cross_both(text)
         except Exception as e:
             return f"横断計算できませんでした。\n{str(e)}"
 
-    # No.3+5 右 / No.3+5 左 → 片側
     if "右" in text or "左" in text:
         try:
             return calculate_side_height(text)
         except Exception as e:
             return f"横断計算できませんでした。\n{str(e)}"
 
-    # それ以外は中心高
     try:
         return calculate_center_height(text)
     except Exception as e:
